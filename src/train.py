@@ -15,7 +15,7 @@ def save_checkpoint(path, model, optimizer, epoch, best_val_loss, accelerator):
             'best_val_loss': best_val_loss,
         }, path)
 
-def load_checkpoint(path, model, optimizer, accelerator):
+def load_checkpoint(path, model, optimizer):
     if not os.path.exists(path):
         return model, optimizer, 0, float("inf")  # No checkpoint, start fresh
     checkpoint = torch.load(path, map_location="cpu")
@@ -42,8 +42,7 @@ def train(config):
 
     # Load checkpoint if available
     model, optimizer, start_epoch, best_val_loss = load_checkpoint(
-        config.checkpoint_path, model, optimizer, accelerator
-    )
+        config.checkpoint_path, model, optimizer)
     patience_counter = 0
 
     for epoch in range(start_epoch, config.num_epochs):

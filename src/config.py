@@ -1,3 +1,4 @@
+import torch
 class Config:
     image_size = 64
     batch_size = 32  # Lower batch size for CPU
@@ -8,4 +9,4 @@ class Config:
     val_dir = "dataset/val_images"
     save_model_path = "unet64_model.pt"
     checkpoint_path = "checkpoint.pth"
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"

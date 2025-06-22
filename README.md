@@ -1,28 +1,35 @@
 # SynFace
-SynFace is a project focused on synthesizing realistic facial images using advanced deep learning techniques.
-
-## Features
-
-- Generate high-quality synthetic face images
-- Customizable parameters for face attributes
-- Easy-to-use interface for batch generation
+SynFace is a project focused on synthesizing facial images of dark-skinned individuals for data augmentation in computer vision tasks. The model used in based on a Generative Adversarial Network (GAN) architecture.
 
 ## Installation
 
+Get necessary libraries by running:
+
 ```bash
-git clone https://github.com/yourusername/SynFace.git
-cd SynFace
 pip install -r requirements.txt
 ```
 
-## Usage
+Get dataset by running:
+
+```bash
+bash dataset.sh
+```
+
+Get trained checkpoints using:
+
+```bash
+cd checkpoints
+bash get_ckpt.sh
+cd ..
+```
+
+## Training
+
+To train the model run the following command:
 
 ```bash
 python src/train.py
 ```
-
-## Model
-The model used in SynFace is based on a Generative Adversarial Network (GAN) architecture, specifically designed for high-resolution image synthesis.
 
 ## Results
 Result corresponfing to best epoch (epoch_006) is shown below:

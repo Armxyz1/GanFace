@@ -1,23 +1,21 @@
 import os
-from PIL import Image
-from torch.utils.data import Dataset
 from torchvision import transforms
+from torch.utils.data import Dataset
+from PIL import Image
 
-class ImageDataset(Dataset):
-    def __init__(self, image_dir, image_size):
-        self.image_paths = [
-            os.path.join(image_dir, fname)
-            for fname in os.listdir(image_dir)
-            if fname.lower().endswith(('.jpg', '.jpeg', '.png'))
-        ]
+class FaceDataset(Dataset):
+    def __init__(self, root_dir, image_size=64):
+        self.paths = [os.path.join(root_dir, img) for img in os.listdir(root_dir)]
         self.transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),  # [0, 1], RGB
+            transforms.Resize(image_size),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5]*3, [0.5]*3)
         ])
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.paths)
 
     def __getitem__(self, idx):
-        img = Image.open(self.image_paths[idx]).convert("RGB")
+        img = Image.open(self.paths[idx]).convert("RGB")
         return self.transform(img)

@@ -1,105 +1,80 @@
-import os
 import torch
-from torch.utils.data import DataLoader
-from accelerate import Accelerator
 from tqdm import tqdm
-from dataset import ImageDataset
-from model import get_model, get_scheduler
+from utils import save_checkpoint, save_samples, get_fake_metric
 
-def save_checkpoint(path, model, optimizer, epoch, best_val_loss, accelerator):
-    if accelerator.is_main_process:
-        torch.save({
-            'model_state': accelerator.get_state_dict(model),
-            'optimizer_state': optimizer.state_dict(),
-            'epoch': epoch,
-            'best_val_loss': best_val_loss,
-        }, path)
+def train_fn(gen, disc, loader, opt_gen, opt_disc, criterion, fixed_noise, device, val_loader, args):
+    best_gen_loss = float('inf')
+    early_stop_counter = 0
 
-def load_checkpoint(path, model, optimizer):
-    if not os.path.exists(path):
-        return model, optimizer, 0, float("inf")  # No checkpoint, start fresh
-    checkpoint = torch.load(path, map_location="cpu")
-    model.load_state_dict(checkpoint["model_state"])
-    optimizer.load_state_dict(checkpoint["optimizer_state"])
-    print(f"Resumed from checkpoint at epoch {checkpoint['epoch'] + 1}")
-    return model, optimizer, checkpoint["epoch"] + 1, checkpoint["best_val_loss"]
+    for epoch in range(args.start_epoch, args.num_epochs):
+        loop = tqdm(loader, leave=True)
+        gen_losses = []
 
-def train(config):
-    accelerator = Accelerator(cpu=True)
+        for real in loop:
+            real = real.to(device)
+            noise = torch.randn(real.size(0), args.z_dim, 1, 1).to(device)
+            fake = gen(noise)
 
-    model = get_model(config.image_size)
-    noise_scheduler = get_scheduler()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+            ### Train Discriminator ###
+            disc_real = disc(real).view(-1)
+            disc_fake = disc(fake.detach()).view(-1)
+            loss_disc = criterion(disc_real, torch.ones_like(disc_real)) + \
+                        criterion(disc_fake, torch.zeros_like(disc_fake))
+            disc.zero_grad()
+            loss_disc.backward()
+            opt_disc.step()
 
-    train_data = ImageDataset(config.train_dir, config.image_size)
-    val_data = ImageDataset(config.val_dir, config.image_size)
-    train_loader = DataLoader(train_data, batch_size=config.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_data, batch_size=config.batch_size, shuffle=False, num_workers=0)
+            ### Train Generator ###
+            output = disc(fake).view(-1)
+            loss_gen = criterion(output, torch.ones_like(output))
+            gen.zero_grad()
+            loss_gen.backward()
+            opt_gen.step()
 
-    model, optimizer, train_loader, val_loader = accelerator.prepare(
-        model, optimizer, train_loader, val_loader
-    )
+            gen_losses.append(loss_gen.item())
 
-    # Load checkpoint if available
-    model, optimizer, start_epoch, best_val_loss = load_checkpoint(
-        config.checkpoint_path, model, optimizer)
-    patience_counter = 0
+            loop.set_description(f"Epoch [{epoch}/{args.num_epochs}]")
+            loop.set_postfix(loss_gen=loss_gen.item(), loss_disc=loss_disc.item())
 
-    for epoch in range(start_epoch, config.num_epochs):
-        model.train()
-        total_loss = 0
+        avg_gen_loss = sum(gen_losses) / len(gen_losses)
 
-        for batch in tqdm(train_loader, desc=f"[Train] Epoch {epoch+1}"):
-            noise = torch.randn_like(batch)
-            timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (batch.size(0),),
-                device=batch.device
-            ).long()
+        ### Generate samples ###
+        save_samples(gen, epoch, fixed_noise, device)
 
-            noisy_images = noise_scheduler.add_noise(batch, noise, timesteps)
-            noise_pred = model(noisy_images, timesteps).sample
-
-            loss = torch.nn.functional.mse_loss(noise_pred, noise)
-            accelerator.backward(loss)
-
-            optimizer.step()
-            optimizer.zero_grad()
-            total_loss += loss.item()
-
-        avg_train_loss = total_loss / len(train_loader)
-        print(f"Epoch {epoch+1} Training Loss: {avg_train_loss:.4f}")
-
-        # Validation
-        model.eval()
-        val_loss = 0
+        ### Validation Metric for Logging Only ###
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc=f"[Val] Epoch {epoch+1}"):
-                noise = torch.randn_like(batch)
-                timesteps = torch.randint(
-                    0, noise_scheduler.config.num_train_timesteps, (batch.size(0),),
-                    device=batch.device
-                ).long()
-                noisy_images = noise_scheduler.add_noise(batch, noise, timesteps)
-                noise_pred = model(noisy_images, timesteps).sample
-                val_loss += torch.nn.functional.mse_loss(noise_pred, noise).item()
+            val_imgs = next(iter(val_loader)).to(device)
+            fake = gen(torch.randn(val_imgs.size(0), args.z_dim, 1, 1).to(device))
+            metric = get_fake_metric(fake)
 
-        avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch {epoch+1} Validation Loss: {avg_val_loss:.4f}")
+        print(f"[VAL] Metric at epoch {epoch}: {metric:.4f}")
+        print(f"[VAL] Average Generator Loss at epoch {epoch}: {avg_gen_loss:.4f}")
 
-        # Save checkpoint
-        save_checkpoint(config.checkpoint_path, model, optimizer, epoch, best_val_loss, accelerator)
-
-        # Early stopping
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            patience_counter = 0
-            if accelerator.is_main_process:
-                torch.save(model.state_dict(), config.save_model_path)
-                print(f"Model saved at epoch {epoch+1}")
+        # Early stopping and checkpointing based on average generator loss
+        if avg_gen_loss < best_gen_loss:
+            best_gen_loss = avg_gen_loss
+            early_stop_counter = 0
+            save_checkpoint({
+                'epoch': epoch,
+                'gen_state_dict': gen.state_dict(),
+                'disc_state_dict': disc.state_dict(),
+                'opt_gen': opt_gen.state_dict(),
+                'opt_disc': opt_disc.state_dict(),
+            }, args.best_checkpoint_path)
+            print(f"Checkpoint saved at epoch {epoch} with loss {avg_gen_loss:.4f}")
         else:
-            patience_counter += 1
-            if patience_counter >= config.early_stopping_patience:
-                print("Early stopping triggered.")
+            early_stop_counter += 1
+            if early_stop_counter > args.patience:
+                print("Early stopping.")
                 break
 
-    print("Training finished.")
+        # Save the model state at the end of each epoch
+        save_checkpoint({
+            'epoch': epoch,
+            'gen_state_dict': gen.state_dict(),
+            'disc_state_dict': disc.state_dict(),
+            'opt_gen': opt_gen.state_dict(),
+            'opt_disc': opt_disc.state_dict(),
+        }, args.checkpoint_path)
+        
+        

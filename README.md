@@ -1,5 +1,5 @@
-# SynFace
-SynFace is a project focused on synthesizing facial images of dark-skinned individuals for data augmentation in computer vision tasks. The model used in based on a Generative Adversarial Network (GAN) architecture.
+# GanFace
+GanFace is a project focused on synthesizing facial images of dark-skinned individuals for data augmentation in computer vision tasks. The model used in based on a Generative Adversarial Network (GAN) architecture.
 
 ## Installation
 

@@ -32,5 +32,5 @@ python src/train.py
 ```
 
 ## Results
-Result corresponfing to best epoch (epoch_006) is shown below:
+Result corresponding to best epoch (epoch_006) is shown below:
 ![Sample Output](./samples/epoch_006.png)
